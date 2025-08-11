@@ -117,6 +117,13 @@ export const usecasualresearchStream = (
     useReactToolScheduler(
       async (completedToolCallsFromScheduler) => {
         // This onComplete is called when ALL scheduled tools for a given batch are done.
+        console.log('=== onComplete called with tools:', completedToolCallsFromScheduler.map(t => ({
+          callId: t.request.callId,
+          name: t.request.name,
+          status: t.status,
+          isClientInitiated: t.request.isClientInitiated
+        })));
+        
         if (completedToolCallsFromScheduler.length > 0) {
           // Add the final state of these tools to the history for display.
           addItem(
@@ -732,7 +739,12 @@ export const usecasualresearchStream = (
 
   const handleCompletedTools = useCallback(
     async (completedToolCallsFromScheduler: TrackedToolCall[]) => {
+      console.log('=== handleCompletedTools called ===');
+      console.log('isResponding:', isResponding);
+      console.log('tools received:', completedToolCallsFromScheduler.length);
+      
       if (isResponding) {
+        console.log('Skipping handleCompletedTools because isResponding=true');
         return;
       }
 
@@ -837,20 +849,44 @@ export const usecasualresearchStream = (
         (toolCall) => toolCall.request.prompt_id,
       );
 
-      markToolsAsSubmitted(callIdsToMarkAsSubmitted);
-
       // Don't continue if model was switched due to quota error
       if (modelSwitchedFromQuotaError) {
         return;
       }
 
-      submitQuery(
-        mergePartListUnions(responsesToSend),
-        {
-          isContinuation: true,
-        },
-        prompt_ids[0],
-      );
+      try {
+        // Debug: Log detailed info about what we're sending
+        console.log('=== TOOL RESPONSE DEBUG ===');
+        console.log('casualresearchTools:', casualresearchTools.map(t => ({
+          callId: t.request.callId,
+          toolName: t.request.name,
+          status: t.status,
+          hasResponse: !!t.response,
+          hasResponseParts: !!t.response?.responseParts,
+          responseParts: t.response?.responseParts
+        })));
+        
+        console.log('responsesToSend (before merge):', responsesToSend);
+        const mergedResponse = mergePartListUnions(responsesToSend);
+        console.log('mergedResponse (after merge):', mergedResponse);
+        
+        await submitQuery(
+          mergedResponse,
+          {
+            isContinuation: true,
+          },
+          prompt_ids[0],
+        );
+        
+        console.log('Tool responses submitted successfully, marking as submitted');
+        // Only mark tools as submitted after successfully sending the response
+        markToolsAsSubmitted(callIdsToMarkAsSubmitted);
+      } catch (error) {
+        // Don't mark tools as submitted if the query failed
+        // This allows the tools to be retried if needed
+        console.error('Failed to submit tool responses:', error);
+        throw error;
+      }
     },
     [
       isResponding,
